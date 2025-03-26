@@ -275,7 +275,7 @@ impl Beamformer for Triforce {
             || self.array_geom[1].x != *ports.mic2_x
             || self.array_geom[1].y != *ports.mic2_y
             || self.array_geom[2].x != *ports.mic3_x
-            || self.array_geom[2].y != *ports.mic2_y
+            || self.array_geom[2].y != *ports.mic3_y
         {
             self.hangle_curr = *ports.h_angle;
             self.vangle_curr = *ports.v_angle;
