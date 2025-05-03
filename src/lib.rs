@@ -11,7 +11,7 @@
 
 use std::f32::consts::PI;
 use lv2::prelude::*;
-use nalgebra::{linalg::SVD, ComplexField, Matrix3, Vector3};
+use nalgebra::{linalg::SVD, Matrix3, Vector3};
 use rustfft::{num_complex::Complex, num_traits::Zero, FftPlanner};
 use std::sync::Mutex;
 
@@ -240,29 +240,26 @@ impl Triforce {
 
         // Get the MVDR weights
 
-        // Now we can finally do the beamforming
-        let mut out = vec![Complex::zero(); num_samples];
-
         for t in 0..num_samples {
             let discrete: Vector3<Complex<f32>> =
                 Vector3::new(inputs[0][t], inputs[1][t], inputs[2][t]);
 
-            // Conjugate-linear dot product
-            out[t] = self.weights.dotc(&discrete);
+            let out =
+                // Conjugate-linear dot product
+                self.weights.dotc(&discrete)
+                // Now we need to revert the Hilbert transform and output the signal
+                .re;
+
+            // Do all of our NFP and clamping here
+            let out =
+                if out.is_finite() && !out.is_nan() {
+                    out.clamp(-10f32, 10f32)
+                } else {
+                    0f32
+                };
+
+            output[t] = out;
         }
-
-        // Now we need to revert the Hilbert transform and output the signal
-        let re: Vec<f32> = out.iter().map(|z| z.re).collect();
-
-        // Do all of our NFP and clamping here
-        for (real, output) in Iterator::zip(re.iter(), output.iter_mut()) {
-            if real.is_finite() && !real.is_nan() {
-                *output = real.clamp(-10f32, 10f32);
-            } else {
-                *output = 0f32;
-            }
-        }
-
     }
 }
 
