@@ -10,12 +10,8 @@
  */
 
 use std::f32::consts::PI;
-use std::time::SystemTime;
-
 use lv2::prelude::*;
-
 use nalgebra::{linalg::SVD, ComplexField, DMatrix, DVector, Vector3};
-
 use rustfft::{num_complex::Complex, num_traits::Zero, FftPlanner};
 
 const C: f32 = 343.00; /* m*s^-1 */
@@ -171,7 +167,8 @@ struct Triforce {
     hangle_curr: f32,
     vangle_curr: f32,
     freq_curr: f32,
-    last_update: SystemTime,
+    sample_rate: f32,
+    samples_since_last_update: u32,
     covar_window: Vec<Vec<Complex<f32>>>,
     steering_vector: DVector<Complex<f32>>,
     covar: DMatrix<Complex<f32>>,
@@ -188,12 +185,13 @@ impl Plugin for Triforce {
     type InitFeatures = ();
     type AudioFeatures = ();
 
-    fn new(_info: &PluginInfo, _features: &mut ()) -> Option<Self> {
+    fn new(info: &PluginInfo, _features: &mut ()) -> Option<Self> {
         Some(Self {
             hangle_curr: 0f32,
             vangle_curr: 0f32,
             freq_curr: 1000f32,
-            last_update: SystemTime::now(),
+            samples_since_last_update: u32::max_value(),
+            sample_rate: info.sample_rate() as f32,
             covar_window: vec![
                 vec![Complex::new(0f32, 0f32); 256],
                 vec![Complex::new(0f32, 0f32); 256],
@@ -226,15 +224,18 @@ impl Plugin for Triforce {
 
         // Update the covariance matrix. We use an overlapping window to smooth over
         // the transitions.
-        if self.last_update.elapsed().unwrap().as_millis() > *ports.t_win as u128 {
+        if self.samples_since_last_update as f32 >= (*ports.t_win / 1000.0) * self.sample_rate {
+            self.samples_since_last_update = 0;
             self.covar_window[0].extend_from_slice(&inputs[0][0..767]);
             self.covar_window[1].extend_from_slice(&inputs[1][0..767]);
             self.covar_window[2].extend_from_slice(&inputs[2][0..767]);
             self.covar = covariance(&self.covar_window);
-            self.last_update = SystemTime::now();
             self.covar_window[0] = inputs[0][768..1023].to_vec();
             self.covar_window[1] = inputs[1][768..1023].to_vec();
             self.covar_window[2] = inputs[2][768..1023].to_vec();
+        }
+        else {
+            self.samples_since_last_update += num_samples as u32;
         }
 
         // Get the MVDR weights
