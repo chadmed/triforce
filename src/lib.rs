@@ -218,7 +218,7 @@ impl Plugin for Triforce {
             analytic_signal(*ports.in_3),
         ];
         let num_samples = inputs[0].len();
-        if num_samples < 1023 {
+        if num_samples < 1024 {
             return;
         }
 
@@ -226,13 +226,13 @@ impl Plugin for Triforce {
         // the transitions.
         if self.samples_since_last_update as f32 >= (*ports.t_win / 1000.0) * self.sample_rate {
             self.samples_since_last_update = 0;
-            self.covar_window[0].extend_from_slice(&inputs[0][0..767]);
-            self.covar_window[1].extend_from_slice(&inputs[1][0..767]);
-            self.covar_window[2].extend_from_slice(&inputs[2][0..767]);
+            self.covar_window[0].extend_from_slice(&inputs[0][0..768]);
+            self.covar_window[1].extend_from_slice(&inputs[1][0..768]);
+            self.covar_window[2].extend_from_slice(&inputs[2][0..768]);
             self.covar = covariance(&self.covar_window);
-            self.covar_window[0] = inputs[0][768..1023].to_vec();
-            self.covar_window[1] = inputs[1][768..1023].to_vec();
-            self.covar_window[2] = inputs[2][768..1023].to_vec();
+            self.covar_window[0] = inputs[0][768..1024].to_vec();
+            self.covar_window[1] = inputs[1][768..1024].to_vec();
+            self.covar_window[2] = inputs[2][768..1024].to_vec();
         }
         else {
             self.samples_since_last_update += num_samples as u32;
