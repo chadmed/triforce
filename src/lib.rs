@@ -13,6 +13,7 @@ use std::f32::consts::PI;
 use lv2::prelude::*;
 use nalgebra::{linalg::SVD, ComplexField, DMatrix, DVector, Vector3};
 use rustfft::{num_complex::Complex, num_traits::Zero, FftPlanner};
+use std::sync::Mutex;
 
 const C: f32 = 343.00; /* m*s^-1 */
 
@@ -27,7 +28,7 @@ struct ElemDistance {
 /// Perform a Hilbert transform on a slice of f32s to give us the analytic signal of
 /// our input sample buffer. This is necessary to extract phase information from the
 /// signal, and to make matrix operations a bit easier.
-fn analytic_signal(signal: &[f32]) -> Vec<Complex<f32>> {
+fn analytic_signal(planner: &mut FftPlanner<f32>, signal: &[f32]) -> Vec<Complex<f32>> {
     let len: usize = signal.len();
 
     // Convert each real sample into a complex sample
@@ -35,7 +36,6 @@ fn analytic_signal(signal: &[f32]) -> Vec<Complex<f32>> {
         signal.iter().map(|&x| Complex::new(x, 0.0)).collect();
 
     // Set up the fft and inverse fft
-    let mut planner = FftPlanner::new();
     let fft = planner.plan_fft_forward(len);
     let ifft = planner.plan_fft_inverse(len);
 
@@ -173,6 +173,7 @@ pub struct Triforce {
     steering_vector: DVector<Complex<f32>>,
     covar: DMatrix<Complex<f32>>,
     array_geom: [ElemDistance; 3],
+    planner: Mutex<FftPlanner<f32>>,
 }
 
 trait Beamformer: Plugin {
@@ -201,17 +202,21 @@ impl Triforce {
                 [ElemDistance { x: 0f32, y: 0f32 }; 3],
             ),
             covar: DMatrix::zeros(3, 3),
+            planner: Mutex::new(FftPlanner::new()),
         }
     }
 
     pub fn process_slice(&mut self, mic1: &[f32], mic2: &[f32], mic3: &[f32], output: &mut [f32], t_win: f32) {
 
         // Steering vector is relative to Left/Top mic
-        let inputs = vec![
-            analytic_signal(mic1),
-            analytic_signal(mic2),
-            analytic_signal(mic3),
-        ];
+        let inputs = {
+            let mut planner = self.planner.lock().unwrap();
+            vec![
+                analytic_signal(&mut planner, mic1),
+                analytic_signal(&mut planner, mic2),
+                analytic_signal(&mut planner, mic3),
+            ]
+        };
 
         let num_samples = inputs[0].len();
 
