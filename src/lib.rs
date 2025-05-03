@@ -274,7 +274,24 @@ impl Plugin for Triforce {
         if samples < 1024 {
             return;
         }
-        self.process_slice(&ports.in_1, &ports.in_2, &ports.in_3, &mut ports.out, *ports.t_win);
+
+        let mut i : usize = 0;
+        while i + 2048 <= samples as usize {
+            let j : usize = i + 1024;
+            self.process_slice(&ports.in_1[i..j],
+                               &ports.in_2[i..j],
+                               &ports.in_3[i..j],
+                               &mut ports.out[i..j],
+                               *ports.t_win);
+            i += 1024;
+        }
+
+        let j = samples as usize;
+        self.process_slice(&ports.in_1[i..j],
+                           &ports.in_2[i..j],
+                           &ports.in_3[i..j],
+                           &mut ports.out[i..j],
+                           *ports.t_win);
     }
 }
 
