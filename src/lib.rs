@@ -14,6 +14,7 @@ use lv2::prelude::*;
 use nalgebra::{linalg::SVD, Matrix3, Vector3};
 use rustfft::{num_complex::Complex, num_traits::Zero, FftPlanner};
 use std::sync::Mutex;
+use std::cmp;
 
 const C: f32 = 343.00; /* m*s^-1 */
 
@@ -224,15 +225,20 @@ impl Triforce {
         // Update the covariance matrix. We use an overlapping window to smooth over
         // the transitions.
         if self.samples_since_last_update as f32 >= (t_win / 1000.0) * self.sample_rate {
-            self.samples_since_last_update = 0;
-            self.covar_window[0].extend_from_slice(&inputs[0][0..768]);
-            self.covar_window[1].extend_from_slice(&inputs[1][0..768]);
-            self.covar_window[2].extend_from_slice(&inputs[2][0..768]);
-            self.covar = covariance(&self.covar_window);
-            self.covar_window[0] = inputs[0][768..1024].to_vec();
-            self.covar_window[1] = inputs[1][768..1024].to_vec();
-            self.covar_window[2] = inputs[2][768..1024].to_vec();
-            self.weights = mvdr_weights(&self.covar, &self.steering_vector);
+            let length = self.covar_window[0].len();
+            let lobound = cmp::min(num_samples, 1024 - length);
+            self.covar_window[0].extend_from_slice(&inputs[0][0..lobound]);
+            self.covar_window[1].extend_from_slice(&inputs[1][0..lobound]);
+            self.covar_window[2].extend_from_slice(&inputs[2][0..lobound]);
+            if length + lobound == 1024 {
+                self.samples_since_last_update = 0;
+                self.covar = covariance(&self.covar_window);
+                let hibound = cmp::max(lobound, num_samples - 256);
+                self.covar_window[0] = inputs[0][hibound..num_samples].to_vec();
+                self.covar_window[1] = inputs[1][hibound..num_samples].to_vec();
+                self.covar_window[2] = inputs[2][hibound..num_samples].to_vec();
+                self.weights = mvdr_weights(&self.covar, &self.steering_vector);
+            }
         }
         else {
             self.samples_since_last_update += num_samples as u32;
@@ -276,9 +282,6 @@ impl Plugin for Triforce {
 
     fn run(&mut self, ports: &mut Ports, _features: &mut (), samples: u32) {
         Beamformer::update_params(self, ports);
-        if samples < 1024 {
-            return;
-        }
 
         let mut i : usize = 0;
         while i + 2048 <= samples as usize {
