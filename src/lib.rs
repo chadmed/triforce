@@ -144,7 +144,7 @@ fn mvdr_weights(cov: &DMatrix<Complex<f32>>, sv: &DVector<Complex<f32>>) -> DVec
  *      t_win: covariance matrix time window
  */
 #[derive(PortCollection)]
-struct Ports {
+pub struct Ports {
     in_1: InputPort<Audio>,
     in_2: InputPort<Audio>,
     in_3: InputPort<Audio>,
@@ -163,7 +163,7 @@ struct Ports {
  * Plugin state
  */
 #[uri("https://chadmed.au/triforce")]
-struct Triforce {
+pub struct Triforce {
     hangle_curr: f32,
     vangle_curr: f32,
     freq_curr: f32,
@@ -181,7 +181,30 @@ trait Beamformer: Plugin {
 
 impl Triforce {
 
-    fn process_slice(&mut self, mic1: &[f32], mic2: &[f32], mic3: &[f32], output: &mut [f32], t_win: f32) {
+    pub fn with_sample_rate(sample_rate: f32) -> Self {
+        Self {
+            hangle_curr: 0f32,
+            vangle_curr: 0f32,
+            freq_curr: 1000f32,
+            samples_since_last_update: u32::max_value(),
+            sample_rate,
+            covar_window: vec![
+                vec![Complex::new(0f32, 0f32); 256],
+                vec![Complex::new(0f32, 0f32); 256],
+                vec![Complex::new(0f32, 0f32); 256],
+            ],
+            array_geom: [ElemDistance { x: 0f32, y: 0f32 }; 3],
+            steering_vector: steering_vec(
+                90f32.to_radians(),
+                45f32.to_radians(),
+                1000f32,
+                [ElemDistance { x: 0f32, y: 0f32 }; 3],
+            ),
+            covar: DMatrix::zeros(3, 3),
+        }
+    }
+
+    pub fn process_slice(&mut self, mic1: &[f32], mic2: &[f32], mic3: &[f32], output: &mut [f32], t_win: f32) {
 
         // Steering vector is relative to Left/Top mic
         let inputs = vec![
@@ -247,26 +270,7 @@ impl Plugin for Triforce {
     type AudioFeatures = ();
 
     fn new(info: &PluginInfo, _features: &mut ()) -> Option<Self> {
-        Some(Self {
-            hangle_curr: 0f32,
-            vangle_curr: 0f32,
-            freq_curr: 1000f32,
-            samples_since_last_update: u32::max_value(),
-            sample_rate: info.sample_rate() as f32,
-            covar_window: vec![
-                vec![Complex::new(0f32, 0f32); 256],
-                vec![Complex::new(0f32, 0f32); 256],
-                vec![Complex::new(0f32, 0f32); 256],
-            ],
-            array_geom: [ElemDistance { x: 0f32, y: 0f32 }; 3],
-            steering_vector: steering_vec(
-                90f32.to_radians(),
-                45f32.to_radians(),
-                1000f32,
-                [ElemDistance { x: 0f32, y: 0f32 }; 3],
-            ),
-            covar: DMatrix::zeros(3, 3),
-        })
+        Some(Self::with_sample_rate(info.sample_rate() as f32))
     }
 
     fn run(&mut self, ports: &mut Ports, _features: &mut (), samples: u32) {

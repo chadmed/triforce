@@ -20,5 +20,5 @@ nalgebra = "0.33.2"
 rustfft = "6.2.0"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib","lib"]
 name = "triforce"

@@ -7,6 +7,10 @@ LIBDIR ?= $(PREFIX)/lib64
 default:
 	cargo build --release
 
+performance-test:
+	cargo build --release --example performance_test
+	hyperfine -w 3 -- 'target/release/examples/performance_test 600'
+
 install:
 	install -dDm0755 $(DESTDIR)/$(LIBDIR)/lv2/triforce.lv2/
 	install -pm0755 target/release/libtriforce.so $(DESTDIR)/$(LIBDIR)/lv2/triforce.lv2/triforce.so
