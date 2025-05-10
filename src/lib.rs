@@ -167,8 +167,6 @@ pub struct Triforce {
     t_win_curr: f32,
     sample_rate: f32,
     samples_since_covar: usize,
-    covar_overlap: usize,
-    covar_cursor: usize,
     covar_window: Vec<Vec<Complex<f32>>>,
     steering_vector: Vector3<Complex<f32>>,
     covar: Matrix3<Complex<f32>>,
@@ -189,8 +187,6 @@ impl Triforce {
             freq_curr: 1000f32,
             t_win_curr: 100f32,
             samples_since_covar: 0,
-            covar_overlap: 0,
-            covar_cursor: 0,
             sample_rate,
             // Assume a 100ms window for init
             covar_window: vec![
@@ -220,9 +216,6 @@ impl Triforce {
         t_win: f32,
         buflen: usize,
     ) {
-        // Use a 1/3 overlap of the previous tick for covariance
-        self.covar_overlap = buflen as usize / 3;
-
         // Steering vector is relative to Left/Top mic
         let inputs = {
             let mut planner = self.fft_planner.lock().unwrap();
@@ -239,22 +232,15 @@ impl Triforce {
             self.samples_since_covar = 0;
             self.covar = covariance(&self.covar_window, buflen);
             self.weights = mvdr_weights(&self.covar, &self.steering_vector);
-
-            // Replace the front of the buffers. We will always have the same number
-            // of inputs as covariance vectors.
-            for (i, vec) in self.covar_window.iter_mut().enumerate() {
-                vec[0..self.covar_overlap].copy_from_slice(&inputs[i][0..self.covar_overlap]);
-            }
         } else {
             self.samples_since_covar += buflen;
         }
 
-        self.covar_cursor = self.covar_overlap + self.samples_since_covar;
-        let buf_limit = self.covar_cursor + buflen;
+        let buf_limit = self.samples_since_covar + buflen;
         if buf_limit <= self.covar_window[0].len() {
             // Fill the back of the covariance buffers
             for (i, vec) in self.covar_window.iter_mut().enumerate() {
-                vec[self.covar_cursor..buf_limit].copy_from_slice(&inputs[i]);
+                vec[self.samples_since_covar..buf_limit].copy_from_slice(&inputs[i]);
             }
         }
 
