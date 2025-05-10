@@ -182,8 +182,8 @@ trait Beamformer: Plugin {
 impl Triforce {
     pub fn with_sample_rate(sample_rate: f32) -> Self {
         Self {
-            hangle_curr: 0f32,
-            vangle_curr: 0f32,
+            hangle_curr: 90f32,
+            vangle_curr: 45f32,
             freq_curr: 1000f32,
             t_win_curr: 100f32,
             samples_since_covar: 0,
