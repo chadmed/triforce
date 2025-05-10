@@ -168,8 +168,11 @@ pub struct Triforce {
     hangle_curr: f32,
     vangle_curr: f32,
     freq_curr: f32,
+    t_win_curr: f32,
     sample_rate: f32,
-    samples_since_last_update: u32,
+    samples_since_covar: usize,
+    covar_overlap: usize,
+    covar_cursor: usize,
     covar_window: Vec<Vec<Complex<f32>>>,
     steering_vector: Vector3<Complex<f32>>,
     covar: Matrix3<Complex<f32>>,
@@ -188,12 +191,16 @@ impl Triforce {
             hangle_curr: 0f32,
             vangle_curr: 0f32,
             freq_curr: 1000f32,
-            samples_since_last_update: u32::max_value(),
+            t_win_curr: 100f32,
+            samples_since_covar: 0,
+            covar_overlap: 0,
+            covar_cursor: 0,
             sample_rate,
+            // Assume a 100ms window for init
             covar_window: vec![
-                vec![Complex::new(0f32, 0f32); 256],
-                vec![Complex::new(0f32, 0f32); 256],
-                vec![Complex::new(0f32, 0f32); 256],
+                vec![Complex::new(0f32, 0f32); (sample_rate / 10f32) as usize],
+                vec![Complex::new(0f32, 0f32); (sample_rate / 10f32) as usize],
+                vec![Complex::new(0f32, 0f32); (sample_rate / 10f32) as usize],
             ],
             array_geom: [ElemDistance { x: 0f32, y: 0f32 }; 3],
             steering_vector: steering_vec(
@@ -219,6 +226,9 @@ impl Triforce {
         // All three sample buffers will have the same number of samples
         let num_samples = mic1.len();
 
+        // Use a 1/3 overlap of the previous tick for covariance
+        self.covar_overlap = num_samples / 3;
+
         // Steering vector is relative to Left/Top mic
         let inputs = {
             let mut planner = self.fft_planner.lock().unwrap();
@@ -231,20 +241,27 @@ impl Triforce {
 
         // Update the covariance matrix. We use an overlapping window to smooth over
         // the transitions.
-        if self.samples_since_last_update as f32 >= (t_win / 1000f32) * self.sample_rate {
-            self.samples_since_last_update = 0;
-            // We want a 1/3 overlap
-            let i = num_samples / 3;
-            self.covar_window[0].extend_from_slice(&inputs[0][0..i]);
-            self.covar_window[1].extend_from_slice(&inputs[1][0..i]);
-            self.covar_window[2].extend_from_slice(&inputs[2][0..i]);
+        if self.samples_since_covar as f32 >= (t_win / 1000f32) * self.sample_rate {
+            self.samples_since_covar = 0;
             self.covar = covariance(&self.covar_window);
-            self.covar_window[0] = inputs[0][i + 1..num_samples].to_vec();
-            self.covar_window[1] = inputs[1][i + 1..num_samples].to_vec();
-            self.covar_window[2] = inputs[2][i + 1..num_samples].to_vec();
             self.weights = mvdr_weights(&self.covar, &self.steering_vector);
+
+            // Replace the front of the buffers. We will always have the same number
+            // of inputs as covariance vectors.
+            for (i, vec) in self.covar_window.iter_mut().enumerate() {
+                vec[0..self.covar_overlap].copy_from_slice(&inputs[i][0..self.covar_overlap]);
+            }
         } else {
-            self.samples_since_last_update += num_samples as u32;
+            self.samples_since_covar += num_samples;
+        }
+
+        self.covar_cursor = self.covar_overlap + self.samples_since_covar;
+        let buf_limit = self.covar_cursor + num_samples;
+        if buf_limit <= self.covar_window[0].len() {
+            // Fill the back of the covariance buffers
+            for (i, vec) in self.covar_window.iter_mut().enumerate() {
+                vec[self.covar_cursor..buf_limit].copy_from_slice(&inputs[i]);
+            }
         }
 
         for t in 0..num_samples {
@@ -301,6 +318,7 @@ impl Beamformer for Triforce {
             || self.array_geom[1].y != *ports.mic2_y
             || self.array_geom[2].x != *ports.mic3_x
             || self.array_geom[2].y != *ports.mic3_y
+            || self.t_win_curr != *ports.t_win
         {
             self.hangle_curr = *ports.h_angle;
             self.vangle_curr = *ports.v_angle;
@@ -325,6 +343,13 @@ impl Beamformer for Triforce {
 
             // The steering vector has changed
             self.weights = mvdr_weights(&self.covar, &self.steering_vector);
+
+            self.t_win_curr = *ports.t_win;
+            self.covar_window = vec![
+                vec![Complex::new(0f32, 0f32); (self.sample_rate * (self.t_win_curr / 1000f32)) as usize],
+                vec![Complex::new(0f32, 0f32); (self.sample_rate * (self.t_win_curr / 1000f32)) as usize],
+                vec![Complex::new(0f32, 0f32); (self.sample_rate * (self.t_win_curr / 1000f32)) as usize],
+            ];
         }
     }
 }
