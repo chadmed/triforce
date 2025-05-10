@@ -32,9 +32,7 @@ struct ElemDistance {
 /// Perform a Hilbert transform on a slice of f32s to give us the analytic signal of
 /// our input sample buffer. This is necessary to extract phase information from the
 /// signal, and to make matrix operations a bit easier.
-fn analytic_signal(planner: &mut FftPlanner<f32>, signal: &[f32]) -> Vec<Complex<f32>> {
-    let len: usize = signal.len();
-
+fn analytic_signal(planner: &mut FftPlanner<f32>, signal: &[f32], len: usize) -> Vec<Complex<f32>> {
     // Convert each real sample into a complex sample
     let mut complex_signal: Vec<Complex<f32>> =
         signal.iter().map(|&x| Complex::new(x, 0.0)).collect();
@@ -93,12 +91,10 @@ fn steering_vec(theta: f32, phi: f32, f: f32, elems: [ElemDistance; 3]) -> Vecto
 
 /// There's nothing special about this, it's just a covariance matrix. It is always
 /// square.
-fn covariance(signals: &Vec<Vec<Complex<f32>>>) -> Matrix3<Complex<f32>> {
-    let n_samples = signals[0].len();
-
+fn covariance(signals: &Vec<Vec<Complex<f32>>>, len: usize) -> Matrix3<Complex<f32>> {
     let mut covar = Matrix3::zeros();
 
-    for t in 0..n_samples {
+    for t in 0..len {
         let discrete: Vector3<Complex<f32>> = Vector3::from_iterator(signals.iter().map(|s| s[t]));
         covar += &discrete * discrete.adjoint();
     }
@@ -108,7 +104,7 @@ fn covariance(signals: &Vec<Vec<Complex<f32>>>) -> Matrix3<Complex<f32>> {
     // across the identity
     let reg = Matrix3::identity().map(|x: f32| Complex::new(x * 1e-4f32, 0f32));
 
-    covar /= Complex::new(n_samples as f32, 0f32);
+    covar /= Complex::new(len as f32, 0f32);
     covar + reg
 }
 
@@ -222,20 +218,18 @@ impl Triforce {
         mic3: &[f32],
         output: &mut [f32],
         t_win: f32,
+        buflen: usize,
     ) {
-        // All three sample buffers will have the same number of samples
-        let num_samples = mic1.len();
-
         // Use a 1/3 overlap of the previous tick for covariance
-        self.covar_overlap = num_samples / 3;
+        self.covar_overlap = buflen as usize / 3;
 
         // Steering vector is relative to Left/Top mic
         let inputs = {
             let mut planner = self.fft_planner.lock().unwrap();
             vec![
-                analytic_signal(&mut planner, mic1),
-                analytic_signal(&mut planner, mic2),
-                analytic_signal(&mut planner, mic3),
+                analytic_signal(&mut planner, mic1, buflen),
+                analytic_signal(&mut planner, mic2, buflen),
+                analytic_signal(&mut planner, mic3, buflen),
             ]
         };
 
@@ -243,7 +237,7 @@ impl Triforce {
         // the transitions.
         if self.samples_since_covar as f32 >= (t_win / 1000f32) * self.sample_rate {
             self.samples_since_covar = 0;
-            self.covar = covariance(&self.covar_window);
+            self.covar = covariance(&self.covar_window, buflen);
             self.weights = mvdr_weights(&self.covar, &self.steering_vector);
 
             // Replace the front of the buffers. We will always have the same number
@@ -252,11 +246,11 @@ impl Triforce {
                 vec[0..self.covar_overlap].copy_from_slice(&inputs[i][0..self.covar_overlap]);
             }
         } else {
-            self.samples_since_covar += num_samples;
+            self.samples_since_covar += buflen;
         }
 
         self.covar_cursor = self.covar_overlap + self.samples_since_covar;
-        let buf_limit = self.covar_cursor + num_samples;
+        let buf_limit = self.covar_cursor + buflen;
         if buf_limit <= self.covar_window[0].len() {
             // Fill the back of the covariance buffers
             for (i, vec) in self.covar_window.iter_mut().enumerate() {
@@ -264,7 +258,7 @@ impl Triforce {
             }
         }
 
-        for t in 0..num_samples {
+        for t in 0..buflen {
             let discrete: Vector3<Complex<f32>> =
                 Vector3::from_iterator(inputs.iter().map(|s| s[t]));
 
@@ -305,6 +299,7 @@ impl Plugin for Triforce {
             &ports.in_3,
             &mut ports.out,
             *ports.t_win,
+            samples as usize,
         );
     }
 }
