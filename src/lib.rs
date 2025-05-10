@@ -299,7 +299,6 @@ impl Beamformer for Triforce {
             || self.array_geom[1].y != *ports.mic2_y
             || self.array_geom[2].x != *ports.mic3_x
             || self.array_geom[2].y != *ports.mic3_y
-            || self.t_win_curr != *ports.t_win
         {
             self.hangle_curr = *ports.h_angle;
             self.vangle_curr = *ports.v_angle;
@@ -324,7 +323,10 @@ impl Beamformer for Triforce {
 
             // The steering vector has changed
             self.weights = mvdr_weights(&self.covar, &self.steering_vector);
+        }
 
+        // Resize the covariance window vectors if the time window changes
+        if self.t_win_curr != *ports.t_win {
             self.t_win_curr = *ports.t_win;
             self.covar_window = vec![
                 vec![Complex::new(0f32, 0f32); (self.sample_rate * (self.t_win_curr / 1000f32)) as usize],
