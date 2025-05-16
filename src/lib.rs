@@ -229,9 +229,12 @@ impl Triforce {
             self.covar_window[1].extend_from_slice(&self.inputs[1][0..i]);
             self.covar_window[2].extend_from_slice(&self.inputs[2][0..i]);
             self.covar = covariance(&self.covar_window, self.covar_window[0].len());
-            self.covar_window[0] = self.inputs[0][i..buf_len].to_vec();
-            self.covar_window[1] = self.inputs[1][i..buf_len].to_vec();
-            self.covar_window[2] = self.inputs[2][i..buf_len].to_vec();
+            self.covar_window[0].clear();
+            self.covar_window[0].extend_from_slice(&self.inputs[0][i..buf_len]);
+            self.covar_window[1].clear();
+            self.covar_window[1].extend_from_slice(&self.inputs[1][i..buf_len]);
+            self.covar_window[2].clear();
+            self.covar_window[2].extend_from_slice(&self.inputs[2][i..buf_len]);
             self.weights = mvdr_weights(&self.covar, &self.steering_vector);
         } else {
             self.samples_since_last_update += buf_len;
