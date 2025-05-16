@@ -30,34 +30,35 @@ struct ElemDistance {
 /// Perform a Hilbert transform on a slice of f32s to give us the analytic signal of
 /// our input sample buffer. This is necessary to extract phase information from the
 /// signal, and to make matrix operations a bit easier.
-fn analytic_signal(planner: &mut FftPlanner<f32>, signal: &[f32], len: usize) -> Vec<Complex<f32>> {
+fn analytic_signal(planner: &mut FftPlanner<f32>, signal: &[f32], len: usize, output: &mut Vec<Complex<f32>>) {
+
     // Convert each real sample into a complex sample
-    let mut complex_signal: Vec<Complex<f32>> =
-        signal.iter().map(|&x| Complex::new(x, 0.0)).collect();
+    output.resize(len, Complex::zero());
+    for (o, i) in output.iter_mut().zip(signal.iter()) {
+        *o = Complex::new(*i, 0.0);
+    }
 
     // Set up the fft and inverse fft
     let fft = planner.plan_fft_forward(len);
     let ifft = planner.plan_fft_inverse(len);
 
     // Mutate the output buffer into the forward FFT
-    fft.process(&mut complex_signal);
+    fft.process(output);
 
     // Perform the Hilbert transform on the FFT. To do this, we multiply every
     // positive sample under the Nyquist limit by 2+0j, and destroy every sample
     // above it.
     for i in 0..len {
         if i > 0 && i < len / 2 {
-            complex_signal[i] *= Complex::new(2.0, 0.0);
+            output[i] *= Complex::new(2.0, 0.0);
         } else if i >= len / 2 {
-            complex_signal[i] = Complex::zero();
+            output[i] = Complex::zero();
         }
     }
 
     // Turn the original complex buffer into the inverse FFT and then normalise
-    ifft.process(&mut complex_signal);
-    complex_signal.iter_mut().for_each(|x| *x /= len as f32);
-
-    complex_signal
+    ifft.process(output);
+    output.iter_mut().for_each(|x| *x /= len as f32);
 }
 
 /// The steering vector is a representation of the phase delays at each microphone.
@@ -170,6 +171,7 @@ pub struct Triforce {
     array_geom: [ElemDistance; 3],
     fft_planner: FftPlanner<f32>,
     weights: Vector3<Complex<f32>>,
+    inputs: [Vec<Complex<f32>>; 3],
 }
 
 trait Beamformer: Plugin {
@@ -199,6 +201,7 @@ impl Triforce {
             covar: Matrix3::zeros(),
             fft_planner: FftPlanner::new(),
             weights: Vector3::zeros(),
+            inputs: [Vec::new(), Vec::new(), Vec::new()],
         }
     }
 
@@ -212,13 +215,9 @@ impl Triforce {
         buf_len: usize
     ) {
         // Steering vector is relative to Left/Top mic
-        let inputs = {
-            vec![
-                analytic_signal(&mut self.fft_planner, mic1, buf_len),
-                analytic_signal(&mut self.fft_planner, mic2, buf_len),
-                analytic_signal(&mut self.fft_planner, mic3, buf_len),
-            ]
-        };
+        analytic_signal(&mut self.fft_planner, mic1, buf_len, &mut self.inputs[0]);
+        analytic_signal(&mut self.fft_planner, mic2, buf_len, &mut self.inputs[1]);
+        analytic_signal(&mut self.fft_planner, mic3, buf_len, &mut self.inputs[2]);
 
         // Update the covariance matrix. We use an overlapping window to smooth over
         // the transitions.
@@ -226,13 +225,13 @@ impl Triforce {
             self.samples_since_last_update = 0;
             // We want a 1/3 overlap
             let i = buf_len / 3;
-            self.covar_window[0].extend_from_slice(&inputs[0][0..i]);
-            self.covar_window[1].extend_from_slice(&inputs[1][0..i]);
-            self.covar_window[2].extend_from_slice(&inputs[2][0..i]);
+            self.covar_window[0].extend_from_slice(&self.inputs[0][0..i]);
+            self.covar_window[1].extend_from_slice(&self.inputs[1][0..i]);
+            self.covar_window[2].extend_from_slice(&self.inputs[2][0..i]);
             self.covar = covariance(&self.covar_window, self.covar_window[0].len());
-            self.covar_window[0] = inputs[0][i + 1..buf_len].to_vec();
-            self.covar_window[1] = inputs[1][i + 1..buf_len].to_vec();
-            self.covar_window[2] = inputs[2][i + 1..buf_len].to_vec();
+            self.covar_window[0] = self.inputs[0][i + 1..buf_len].to_vec();
+            self.covar_window[1] = self.inputs[1][i + 1..buf_len].to_vec();
+            self.covar_window[2] = self.inputs[2][i + 1..buf_len].to_vec();
             self.weights = mvdr_weights(&self.covar, &self.steering_vector);
         } else {
             self.samples_since_last_update += buf_len;
@@ -240,7 +239,7 @@ impl Triforce {
 
         for t in 0..buf_len {
             let discrete: Vector3<Complex<f32>> =
-                Vector3::from_iterator(inputs.iter().map(|s| s[t]));
+                Vector3::from_iterator(self.inputs.iter().map(|s| s[t]));
 
             let out =
                 // Conjugate-linear dot product
