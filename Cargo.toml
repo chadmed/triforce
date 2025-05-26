@@ -17,7 +17,7 @@ lto = "thin"
 [dependencies]
 lv2 = "0.6.0"
 nalgebra = "0.33.2"
-rustfft = "6.2.0"
+num-complex = "0.4"
 
 [lib]
 crate-type = ["cdylib","lib"]
