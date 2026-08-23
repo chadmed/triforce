@@ -272,13 +272,24 @@ impl Plugin for Triforce {
 
     fn run(&mut self, ports: &mut Ports, _features: &mut (), samples: u32) {
         Beamformer::update_params(self, ports);
+        let n = samples as usize;
+
+        // Copy input buffers to avoid aliasing issues when PipeWire passes
+        // the same memory for input and output (inPlaceBroken not supported).
+        let mut mic1 = [0f32; 4096];
+        let mut mic2 = [0f32; 4096];
+        let mut mic3 = [0f32; 4096];
+        mic1[..n].copy_from_slice(&ports.in_1[..n]);
+        mic2[..n].copy_from_slice(&ports.in_2[..n]);
+        mic3[..n].copy_from_slice(&ports.in_3[..n]);
+
         self.process_slice(
-            &ports.in_1,
-            &ports.in_2,
-            &ports.in_3,
+            &mic1[..n],
+            &mic2[..n],
+            &mic3[..n],
             &mut ports.out,
             *ports.t_win,
-            samples as usize
+            n
         );
     }
 }
@@ -321,3 +332,49 @@ impl Beamformer for Triforce {
 }
 
 lv2_descriptors!(Triforce);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn process_slice_aliased_buffers() {
+        let mut inst = Triforce::with_sample_rate(48000.0);
+        let n = 1024;
+
+        // Sine wave as input
+        let data: Vec<f32> = (0..n)
+            .map(|i| (2.0 * PI * 440.0 * i as f32 / 48000.0).sin())
+            .collect();
+
+        // Aliased: same buffer for input and output (PipeWire inPlaceBroken scenario)
+        let mut buf = data.clone();
+        let input = buf.clone();
+
+        inst.process_slice(&input, &input, &input, &mut buf, 500.0, n);
+
+        // Output must be finite and contain signal (not NaN, not all zeros)
+        assert!(buf.iter().all(|x| x.is_finite()), "output contains NaN/Inf");
+        let rms: f32 = (buf.iter().map(|x| x * x).sum::<f32>() / n as f32).sqrt();
+        assert!(rms > 0.001, "output is silence (rms={rms})");
+    }
+
+    #[test]
+    fn process_slice_separate_buffers() {
+        let mut inst = Triforce::with_sample_rate(48000.0);
+        let n = 1024;
+
+        let mic1: Vec<f32> = (0..n)
+            .map(|i| (2.0 * PI * 440.0 * i as f32 / 48000.0).sin())
+            .collect();
+        let mic2 = mic1.clone();
+        let mic3 = mic1.clone();
+        let mut out = vec![0f32; n];
+
+        inst.process_slice(&mic1, &mic2, &mic3, &mut out, 500.0, n);
+
+        assert!(out.iter().all(|x| x.is_finite()));
+        let rms: f32 = (out.iter().map(|x| x * x).sum::<f32>() / n as f32).sqrt();
+        assert!(rms > 0.001, "output is silence (rms={rms})");
+    }
+}
