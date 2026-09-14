@@ -6,6 +6,8 @@
  */
 
 use nalgebra::Complex;
+#[cfg(target_feature = "neon")]
+use core::arch::aarch64::*;
 
 // Approximate Hilbert analytic transform with an IIR filter.
 // The filter uses a 12th-order IIR design with pre-calculated coefficients and
@@ -105,6 +107,58 @@ impl Filter {
     }
 
     /// Process the input signal and produce the output signal for N channels.
+    #[cfg(target_feature = "neon")]
+    pub fn process<const N: usize>(
+        &self,
+        state: &mut [State; N],
+        input: &[&[f32]; N],
+        output: &mut [&mut [Complex<f32>]; N],
+    ) {
+        if N == 0 {
+            return;
+        };
+        assert_eq!(ORDER, 12);
+        let samples = input[0].len();
+        for i in 0..samples {
+            for k in 0..N {
+                assert_eq!(input[k].len(), samples);
+                assert_eq!(output[k].len(), samples);
+                unsafe {
+                    let mut ra = vdupq_n_f32(0f32);
+                    let mut ia = vdupq_n_f32(0f32);
+                    for j in 0..ORDER / 4 {
+                        let state_r = vld1q_f32(state[k].real.as_ptr().add(j * 4));
+                        let state_i = vld1q_f32(state[k].imag.as_ptr().add(j * 4));
+                        // Coeffs and poles never change, but the compiler already hoist loading
+                        // them outside of the loops.
+                        let coeffs_r = vld1q_f32(self.coeffs_r.as_ptr().add(j * 4));
+                        let coeffs_i = vld1q_f32(self.coeffs_i.as_ptr().add(j * 4));
+                        let poles_r = vld1q_f32(self.poles_r.as_ptr().add(j * 4));
+                        let poles_i = vld1q_f32(self.poles_i.as_ptr().add(j * 4));
+
+                        let rv = vmulq_f32(state_r, poles_r);
+                        let rv = vfmsq_f32(rv, state_i, poles_i);
+                        let rv = vfmaq_n_f32(rv, coeffs_r, input[k][i]);
+
+                        let iv = vmulq_f32(state_r, poles_i);
+                        let iv = vfmaq_f32(iv, state_i, poles_r);
+                        let iv = vfmaq_n_f32(iv, coeffs_i, input[k][i]);
+
+                        ra = vaddq_f32(ra, rv);
+                        ia = vaddq_f32(ia, iv);
+                        vst1q_f32(state[k].real.as_mut_ptr().add(j * 4), rv);
+                        vst1q_f32(state[k].imag.as_mut_ptr().add(j * 4), iv);
+                    }
+                    let ra = input[k][i].mul_add(self.direct, vaddvq_f32(ra));
+                    let ia = vaddvq_f32(ia);
+                    output[k][i] = Complex::new(ra, ia);
+                }
+            }
+        }
+    }
+
+    /// Process the input signal and produce the output signal for N channels.
+    #[cfg(not(target_feature = "neon"))]
     pub fn process<const N: usize>(
         &self,
         state: &mut [State; N],
