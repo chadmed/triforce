@@ -8,6 +8,8 @@
 use nalgebra::Complex;
 #[cfg(target_feature = "neon")]
 use core::arch::aarch64::*;
+#[cfg(target_arch = "x86_64")]
+use core::arch::x86_64::*;
 
 // Approximate Hilbert analytic transform with an IIR filter.
 // The filter uses a 12th-order IIR design with pre-calculated coefficients and
@@ -158,7 +160,64 @@ impl Filter {
     }
 
     /// Process the input signal and produce the output signal for N channels.
-    #[cfg(not(target_feature = "neon"))]
+    #[cfg(target_arch = "x86_64")]
+    #[inline(never)]
+    pub fn process<const N: usize>(
+        &self,
+        state: &mut [State; N],
+        input: &[&[f32]; N],
+        output: &mut [&mut [Complex<f32>]; N],
+    ) {
+        if N == 0 {
+            return;
+        };
+        assert_eq!(ORDER, 12);
+        let samples = input[0].len();
+        for i in 0..samples {
+            for k in 0..N {
+                assert_eq!(input[k].len(), samples);
+                assert_eq!(output[k].len(), samples);
+                unsafe {
+                    let mut ra = _mm_set1_ps(0f32);
+                    let mut ia = _mm_set1_ps(0f32);
+                    let input_k_i = _mm_set1_ps(input[k][i]);
+                    for j in 0..ORDER / 4 {
+                        let state_r = _mm_loadu_ps(state[k].real.as_ptr().add(j * 4));
+                        let state_i = _mm_loadu_ps(state[k].imag.as_ptr().add(j * 4));
+                        let coeffs_r = _mm_loadu_ps(self.coeffs_r.as_ptr().add(j * 4));
+                        let coeffs_i = _mm_loadu_ps(self.coeffs_i.as_ptr().add(j * 4));
+                        let poles_r = _mm_loadu_ps(self.poles_r.as_ptr().add(j * 4));
+                        let poles_i = _mm_loadu_ps(self.poles_i.as_ptr().add(j * 4));
+
+                        let a = _mm_mul_ps(state_r, poles_r);
+                        let b = _mm_mul_ps(state_i, poles_i);
+                        let c = _mm_mul_ps(input_k_i, coeffs_r);
+                        let rv = _mm_add_ps(_mm_sub_ps(a, b), c);
+
+                        let a = _mm_mul_ps(state_r, poles_i);
+                        let b = _mm_mul_ps(state_i, poles_r);
+                        let c = _mm_mul_ps(input_k_i, coeffs_i);
+                        let iv = _mm_add_ps(_mm_add_ps(a, b), c);
+
+                        ra = _mm_add_ps(ra, rv);
+                        ia = _mm_add_ps(ia, iv);
+                        _mm_store_ps(state[k].real.as_mut_ptr().add(j * 4), rv);
+                        _mm_store_ps(state[k].imag.as_mut_ptr().add(j * 4), iv);
+                    }
+                    let ra = _mm_hadd_ps(ra, ra);
+                    let ra = _mm_hadd_ps(ra, ra);
+                    let ra = input[k][i] * self.direct + _mm_cvtss_f32(ra);
+                    let ia = _mm_hadd_ps(ia, ia);
+                    let ia = _mm_hadd_ps(ia, ia);
+                    let ia = _mm_cvtss_f32(ia);
+                    output[k][i] = Complex::new(ra, ia);
+                }
+            }
+        }
+    }
+
+    /// Process the input signal and produce the output signal for N channels.
+    #[cfg(not(any(target_feature = "neon", target_arch = "x86_64")))]
     pub fn process<const N: usize>(
         &self,
         state: &mut [State; N],
