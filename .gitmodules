@@ -1,3 +1,0 @@
-[submodule "lapack-sys"]
-	path = lapack-sys
-	url = git@github.com:numrs/lapack-sys
