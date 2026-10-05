@@ -16,7 +16,7 @@ lto = "thin"
 
 [dependencies]
 lv2 = "0.6.0"
-nalgebra = "0.33.2"
+nalgebra = "0.35.0"
 num-complex = "0.4"
 
 [lib]
