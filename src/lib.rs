@@ -88,7 +88,14 @@ fn mvdr_weights(cov: &Matrix3<Complex<f32>>, sv: &Vector3<Complex<f32>>) -> Vect
     let num = r_inv * sv;
     let den = sv.dotc(&num); // Conjugate-linear dot product
 
-    num / den
+    let weights = num / den;
+    // A window of digital silence leaves only the regularisation term, which the
+    // pseudoinverse truncates to zero. Fall back to delay-and-sum instead of NaN.
+    if weights.iter().all(|w| w.re.is_finite() && w.im.is_finite()) {
+        weights
+    } else {
+        sv / Complex::new(sv.norm_squared(), 0f32)
+    }
 }
 
 /*
@@ -294,3 +301,40 @@ impl Beamformer for Triforce {
 }
 
 lv2_descriptors!(Triforce);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RATE: f32 = 48000f32;
+    const BLOCK: usize = 1024;
+
+    /// Feed the same signal to all three inputs, i.e. a source on the array's normal.
+    fn run(triforce: &mut Triforce, input: &[f32]) -> Vec<f32> {
+        let mut output = vec![0f32; input.len()];
+        for (i, o) in input.chunks(BLOCK).zip(output.chunks_mut(BLOCK)) {
+            triforce.process_slice(i, i, i, o, 500f32, i.len());
+        }
+        output
+    }
+
+    #[test]
+    fn silence_in_silence_out() {
+        let mut triforce = Triforce::with_sample_rate(RATE);
+        let output = run(&mut triforce, &[0f32; RATE as usize]);
+        let peak = output.iter().fold(0f32, |m, v| m.max(v.abs()));
+        assert_eq!(peak, 0f32, "silent input produced output peaking at {peak}");
+    }
+
+    #[test]
+    fn signal_after_silent_start_is_not_muted() {
+        // Capture streams can start with a block of digital silence
+        let mut input = vec![0f32; BLOCK];
+        input.extend((0..8 * BLOCK).map(|n| 0.01 * (2f32 * PI * 1000f32 * n as f32 / RATE).sin()));
+        let mut triforce = Triforce::with_sample_rate(RATE);
+        let output = run(&mut triforce, &input);
+        let tail = &output[2 * BLOCK..];
+        let rms = (tail.iter().map(|v| v * v).sum::<f32>() / tail.len() as f32).sqrt();
+        assert!(rms > 0.005, "a 0.01 sine came out at RMS {rms}");
+    }
+}

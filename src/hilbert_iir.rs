@@ -79,7 +79,7 @@ pub struct State {
 impl State {
     /// Initial state for a channel.
     pub const INITIAL: State = State {
-        real: [-1.0; ORDER],
+        real: [0.0; ORDER],
         imag: [0.0; ORDER],
     };
 }
