@@ -153,7 +153,7 @@ impl Triforce {
             hangle_curr: 0f32,
             vangle_curr: 0f32,
             freq_curr: 1000f32,
-            samples_since_last_update: usize::max_value(),
+            samples_since_last_update: usize::MAX,
             sample_rate,
             covar_window: [Vec::new(), Vec::new(), Vec::new()],
             array_geom: [ElemDistance { x: 0f32, y: 0f32 }; 3],
