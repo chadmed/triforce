@@ -33,8 +33,8 @@ fn steering_vec(theta: f32, phi: f32, f: f32, elems: [ElemDistance; 3]) -> Vecto
     let mic_positions: Vec<Vector3<f32>> =
         elems.iter().map(|e| Vector3::new(e.x, e.y, 0f32)).collect();
 
-    // Calculate angular repetency (2pi/lambda)
-    let repetency = (2f32 * PI) / (f / C);
+    // Angular repetency (wavenumber), 2pi/lambda = 2pi * f / c
+    let repetency = (2f32 * PI) * f / C;
 
     // Compute the unit vector of the DOA
     let u_dir = Vector3::new(phi.sin() * theta.cos(), phi.sin() * theta.sin(), phi.cos());
@@ -44,8 +44,10 @@ fn steering_vec(theta: f32, phi: f32, f: f32, elems: [ElemDistance; 3]) -> Vecto
     let mut steering_vector = Vector3::from_element(Complex::new(0f32, 0f32));
 
     for (i, mic_pos) in mic_positions.iter().enumerate() {
-        let delay = mic_pos.dot(&u_dir) / C;
-        let phase = -repetency * delay;
+        // Path difference along the DOA, in metres; times the wavenumber
+        // gives the phase of this element relative to the zeroth
+        let path = mic_pos.dot(&u_dir);
+        let phase = -repetency * path;
         steering_vector[i] = Complex::new(phase.cos(), phase.sin());
     }
 
