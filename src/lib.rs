@@ -33,8 +33,8 @@ fn steering_vec(theta: f32, phi: f32, f: f32, elems: [ElemDistance; 3]) -> Vecto
     let mic_positions: Vec<Vector3<f32>> =
         elems.iter().map(|e| Vector3::new(e.x, e.y, 0f32)).collect();
 
-    // Calculate angular repetency (2pi/lambda)
-    let repetency = (2f32 * PI) / (f / C);
+    // Angular repetency (wavenumber), 2pi/lambda = 2pi * f / c
+    let repetency = (2f32 * PI) * f / C;
 
     // Compute the unit vector of the DOA
     let u_dir = Vector3::new(phi.sin() * theta.cos(), phi.sin() * theta.sin(), phi.cos());
@@ -44,8 +44,10 @@ fn steering_vec(theta: f32, phi: f32, f: f32, elems: [ElemDistance; 3]) -> Vecto
     let mut steering_vector = Vector3::from_element(Complex::new(0f32, 0f32));
 
     for (i, mic_pos) in mic_positions.iter().enumerate() {
-        let delay = mic_pos.dot(&u_dir) / C;
-        let phase = -repetency * delay;
+        // Path difference along the DOA, in metres; times the wavenumber
+        // gives the phase of this element relative to the zeroth
+        let path = mic_pos.dot(&u_dir);
+        let phase = -repetency * path;
         steering_vector[i] = Complex::new(phase.cos(), phase.sin());
     }
 
@@ -294,3 +296,59 @@ impl Beamformer for Triforce {
 }
 
 lv2_descriptors!(Triforce);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn arg(z: Complex<f32>) -> f32 {
+        z.im.atan2(z.re)
+    }
+
+    #[test]
+    fn steering_phase_follows_the_path_difference() {
+        // A source in the array plane along +x, 1 kHz, mic 2 20 mm along x from mic 1:
+        // its wave reaches mic 2 2 * pi * f * d / c = 0.366 rad earlier.
+        let elems = [
+            ElemDistance { x: 0f32, y: 0f32 },
+            ElemDistance {
+                x: 0.02f32,
+                y: 0f32,
+            },
+            ElemDistance {
+                x: 0f32,
+                y: 0.02f32,
+            },
+        ];
+        let sv = steering_vec(0f32, 90f32.to_radians(), 1000f32, elems);
+        let want = -2f32 * PI * 1000f32 * 0.02f32 / C;
+        assert!(arg(sv[0]).abs() < 1e-6);
+        assert!(
+            (arg(sv[1]) - want).abs() < 1e-4,
+            "mic 2 phase {} want {}",
+            arg(sv[1]),
+            want
+        );
+        assert!(arg(sv[2]).abs() < 1e-4);
+    }
+
+    #[test]
+    fn broadside_is_all_ones() {
+        // v_angle 0 (broadside), as every shipped configuration uses: no path difference.
+        let elems = [
+            ElemDistance { x: 0f32, y: 0f32 },
+            ElemDistance {
+                x: 0.02f32,
+                y: 0f32,
+            },
+            ElemDistance {
+                x: 0.01f32,
+                y: 0.017f32,
+            },
+        ];
+        let sv = steering_vec(80f32.to_radians(), 0f32, 2000f32, elems);
+        for z in sv.iter() {
+            assert!((z.re - 1f32).abs() < 1e-6 && z.im.abs() < 1e-6);
+        }
+    }
+}
